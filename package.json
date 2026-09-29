@@ -1,0 +1,33 @@
+{
+  "name": "omnipost",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "workspaces": [
+    "client",
+    "server/*"
+  ],
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "dev": "dotenv -e .env -- npm run dev -w @omnipost/client",
+    "build": "npm run db:generate && npm run build -w @omnipost/client",
+    "start": "npm run start -w @omnipost/client",
+    "typecheck": "npm run typecheck --workspaces --if-present",
+    "test": "dotenv -e .env -- npm run test --workspaces --if-present",
+    "db:generate": "npm run generate -w @omnipost/database",
+    "db:push": "dotenv -e .env -- npm run push -w @omnipost/database",
+    "db:migrate": "dotenv -e .env -- npm run migrate -w @omnipost/database",
+    "db:migrate:dev": "dotenv -e .env -- npm run migrate:dev -w @omnipost/database",
+    "db:studio": "dotenv -e .env -- npm run studio -w @omnipost/database"
+  },
+  "allowScripts": {
+    "prisma@7.10.0": true,
+    "@prisma/engines@7.10.0": true,
+    "esbuild@0.28.2": true
+  },
+  "devDependencies": {
+    "dotenv-cli": "^11.0.0"
+  }
+}

@@ -1,0 +1,126 @@
+version: "3.9"
+
+services:
+  # -------------------------------------------------------------
+  # PostgreSQL Database
+  # -------------------------------------------------------------
+  db:
+    image: postgres:16-alpine
+    container_name: omnipost-prod-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: omnipost
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-omnipost_secure_prod_password}
+      POSTGRES_DB: omnipost
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./infra/backups:/backups
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U omnipost -d omnipost"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - omnipost-net
+
+  # -------------------------------------------------------------
+  # Redis Cache & BullMQ Queue
+  # -------------------------------------------------------------
+  redis:
+    image: redis:7-alpine
+    container_name: omnipost-prod-redis
+    restart: unless-stopped
+    command: redis-server --appendonly yes --requirepass ${REDIS_PASSWORD:-redis_secure_prod_password}
+    volumes:
+      - redis_data:/data
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD:-redis_secure_prod_password}", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - omnipost-net
+
+  # -------------------------------------------------------------
+  # OmniPost Web Service (Next.js App)
+  # -------------------------------------------------------------
+  web:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: runner
+    container_name: omnipost-prod-web
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      NODE_ENV: production
+      PORT: 3000
+      DATABASE_URL: postgresql://omnipost:${DB_PASSWORD:-omnipost_secure_prod_password}@db:5432/omnipost?schema=public
+      REDIS_URL: redis://:${REDIS_PASSWORD:-redis_secure_prod_password}@redis:6379
+      NEXTAUTH_SECRET: ${NEXTAUTH_SECRET:-replace_with_prod_secret_32_chars_min}
+      ENCRYPTION_KEY: ${ENCRYPTION_KEY:-replace_with_hex_64_char_prod_key}
+    expose:
+      - "3000"
+    networks:
+      - omnipost-net
+
+  # -------------------------------------------------------------
+  # Background Worker (Scheduler & Ingestion Daemon)
+  # -------------------------------------------------------------
+  worker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: runner
+    container_name: omnipost-prod-worker
+    restart: unless-stopped
+    command: node server/worker/dist/index.js
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      NODE_ENV: production
+      DATABASE_URL: postgresql://omnipost:${DB_PASSWORD:-omnipost_secure_prod_password}@db:5432/omnipost?schema=public
+      REDIS_URL: redis://:${REDIS_PASSWORD:-redis_secure_prod_password}@redis:6379
+      ENCRYPTION_KEY: ${ENCRYPTION_KEY:-replace_with_hex_64_char_prod_key}
+    networks:
+      - omnipost-net
+
+  # -------------------------------------------------------------
+  # Caddy Reverse Proxy (Auto Let's Encrypt SSL & HTTP/2)
+  # -------------------------------------------------------------
+  caddy:
+    image: caddy:2-alpine
+    container_name: omnipost-prod-proxy
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./infra/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - web
+    networks:
+      - omnipost-net
+
+volumes:
+  postgres_data:
+  redis_data:
+  caddy_data:
+  caddy_config:
+
+networks:
+  omnipost-net:
+    driver: bridge

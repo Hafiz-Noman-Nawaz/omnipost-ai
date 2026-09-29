@@ -1,0 +1,51 @@
+# Dependencies
+node_modules/
+.pnp
+.pnp.js
+
+# Next.js & Turbopack builds
+.next/
+out/
+client/.next/
+client/out/
+dist/
+build/
+*.tsbuildinfo
+
+# Generated Prisma Client
+server/database/src/generated/
+packages/database/src/generated/
+
+# Environment files & Secrets (STRICT — NEVER COMMIT)
+.env
+.env*
+!.env.example
+*.pem
+*.key
+*.cert
+*.crt
+*.pfx
+
+# Local data & uploads
+.data/
+uploads/
+*.sqlite
+*.sqlite3
+*.db
+
+# Observability, Logs & Scratch
+coverage/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+.freebuff/
+.gemini/
+scratch/
+
+# OS specific files
+.DS_Store
+Thumbs.db
+

@@ -1,0 +1,30 @@
+{
+    email admin@omnipost.local
+}
+
+# HTTP to HTTPS automatic redirection and proxying
+:80 {
+    reverse_proxy web:3000
+}
+
+# Domain routing (can be replaced with your actual domain e.g. app.omnipost.com)
+{$DOMAIN:localhost} {
+    encode gzip zstd
+
+    # Route public short links directly with low latency
+    handle /l/* {
+        reverse_proxy web:3000
+    }
+
+    # Route SSE event streams without buffering
+    handle /api/rest/stream/* {
+        reverse_proxy web:3000 {
+            flush_interval -1
+        }
+    }
+
+    # Main application proxy
+    handle {
+        reverse_proxy web:3000
+    }
+}

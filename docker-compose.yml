@@ -1,0 +1,25 @@
+# OmniPost Agent — local Postgres only (Phase 1).
+# Host port is 5434 on purpose: this machine runs a native Postgres on 5432
+# and another project's container already binds 5433.
+services:
+  db:
+    image: postgres:18-alpine
+    container_name: omnipost-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: omnipost
+      POSTGRES_PASSWORD: omnipost
+      POSTGRES_DB: omnipost
+    ports:
+      - "5434:5432"
+    volumes:
+      # postgres:18+ expects the mount at /var/lib/postgresql (versioned subdirs inside)
+      - omnipost_pgdata:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U omnipost -d omnipost"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  omnipost_pgdata:
