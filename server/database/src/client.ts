@@ -10,7 +10,10 @@ const globalForPrisma = globalThis as unknown as { prisma?: PrismaClient };
 
 export function createPrismaClient(databaseUrl?: string): PrismaClient {
   const connectionString =
-    databaseUrl ?? process.env.DATABASE_URL ?? "postgresql://omnipost:omnipost@localhost:5434/omnipost";
+    databaseUrl ??
+    process.env.DATABASE_URL_POOLED ??
+    process.env.DATABASE_URL ??
+    "postgresql://omnipost:omnipost@localhost:5434/omnipost";
   const adapter = new PrismaPg({ connectionString });
   return new PrismaClient({ adapter });
 }
