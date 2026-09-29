@@ -15,7 +15,6 @@ const securityHeaders = [
 ];
 
 const nextConfig: NextConfig = {
-  distDir: "../.next",
   serverExternalPackages: ["@node-rs/argon2", "@prisma/adapter-pg", "pino"],
   async headers() {
     return [{ source: "/(.*)", headers: securityHeaders }];
