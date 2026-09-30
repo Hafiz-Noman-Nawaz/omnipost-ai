@@ -49,7 +49,6 @@ export default function ResponsiveLayout({ user, children }: ResponsiveLayoutPro
         <nav className="flex-1 space-y-1 overflow-y-auto pr-1">
           {NAV_ITEMS.map((item) => {
             const isActive = pathname === item.href || (item.href !== "/dashboard" && pathname.startsWith(item.href));
-            const isPending = item.phase > 12;
 
             return (
               <Link
@@ -65,12 +64,8 @@ export default function ResponsiveLayout({ user, children }: ResponsiveLayoutPro
                   <span className="text-base">{item.icon}</span>
                   <span className="truncate">{item.label}</span>
                 </div>
-                {isPending ? (
-                  <span className="text-[10px] text-[var(--muted-dark)] border border-white/5 bg-black/20 rounded px-1.5 py-0.5" title={`Lands in Phase ${item.phase}`}>
-                    P{item.phase}
-                  </span>
-                ) : item.phase === 10 ? (
-                  <span className="badge badge-accent text-[10px] px-1.5 py-0">v10</span>
+                {item.href === "/agent" ? (
+                  <span className="badge badge-accent text-[10px] px-1.5 py-0">AI</span>
                 ) : null}
               </Link>
             );
@@ -174,11 +169,6 @@ export default function ResponsiveLayout({ user, children }: ResponsiveLayoutPro
                         <span>{item.icon}</span>
                         <span>{item.label}</span>
                       </div>
-                      {item.phase > 12 && (
-                        <span className="text-[10px] text-[var(--muted-dark)] border border-white/5 rounded px-1.5 py-0.5">
-                          P{item.phase}
-                        </span>
-                      )}
                     </Link>
                   );
                 })}
