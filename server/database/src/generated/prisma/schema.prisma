@@ -1,0 +1,626 @@
+generator client {
+  provider = "prisma-client-js"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// ---------- Tenancy & auth ----------
+
+model Organization {
+  id        String   @id @default(cuid())
+  name      String
+  slug      String   @unique
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  memberships      Membership[]
+  brands           Brand[]
+  socialAccounts   SocialAccount[]
+  campaigns        Campaign[]
+  content          Content[]
+  variants         ContentVariant[]
+  responseTemplate ResponseTemplate[]
+  automationRules  AutomationRule[]
+  notifications    Notification[]
+  auditLogs        AuditLog[]
+  agentExecutions  AgentExecution[]
+  planLimits       PlanLimits?
+  settings         OrganizationSettings?
+}
+
+model User {
+  id           String       @id @default(cuid())
+  email        String       @unique
+  name         String?
+  passwordHash String? // argon2id; null when OAuth-only
+  createdAt    DateTime     @default(now())
+  updatedAt    DateTime     @updatedAt
+  memberships  Membership[]
+  sessions     Session[]
+  accounts     Account[] // Auth.js
+  preferences  Json? // user-level agent prefs (never security-relevant)
+}
+
+model Membership {
+  id             String       @id @default(cuid())
+  organizationId String
+  userId         String
+  role           Role         @default(OWNER)
+  isDefaultOrg   Boolean      @default(true)
+  createdAt      DateTime     @default(now())
+  organization   Organization @relation(fields: [organizationId], references: [id])
+  user           User         @relation(fields: [userId], references: [id])
+
+  @@unique([organizationId, userId])
+}
+
+enum Role {
+  OWNER
+  ADMIN
+  EDITOR
+  VIEWER
+}
+
+model Session {
+  id        String    @id @default(cuid())
+  userId    String
+  expiresAt DateTime
+  createdAt DateTime  @default(now())
+  ip        String?
+  userAgent String?
+  revokedAt DateTime?
+  tokenHash String?
+  user      User      @relation(fields: [userId], references: [id])
+}
+
+model Account {
+  id                String @id @default(cuid())
+  userId            String
+  provider          String
+  providerAccountId String
+  user              User   @relation(fields: [userId], references: [id])
+
+  @@unique([provider, providerAccountId])
+}
+
+model PlanLimits {
+  id                 String       @id @default(cuid())
+  organizationId     String       @unique
+  plan               String       @default("internal") // inert label
+  unlimited          Boolean      @default(true) // founder: no gating
+  maxSocialAccounts  Int?
+  maxPostsPerMonth   Int?
+  maxAiGenerations   Int?
+  maxScheduledPosts  Int?
+  maxAutomationRules Int?
+  maxTeamMembers     Int?
+  organization       Organization @relation(fields: [organizationId], references: [id])
+}
+
+model OrganizationSettings {
+  id              String       @id @default(cuid())
+  organizationId  String       @unique
+  timezone        String       @default("UTC")
+  autoReplyMaster Boolean      @default(false)
+  createdAt       DateTime     @default(now())
+  updatedAt       DateTime     @default(now()) @updatedAt
+  organization    Organization @relation(fields: [organizationId], references: [id])
+}
+
+// ---------- Brands & campaigns ----------
+
+model Brand {
+  id             String       @id @default(cuid())
+  organizationId String
+  name           String
+  voice          String? // "technical, friendly, confident, human"
+  avoid          String? // "corporate language, fake urgency, overpromising"
+  audience       String?
+  guidelines     Json? // extra memory (spec §10/§35)
+  isDefault      Boolean      @default(false)
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+  organization   Organization @relation(fields: [organizationId], references: [id])
+  campaigns      Campaign[]
+
+  @@index([organizationId])
+}
+
+model Campaign {
+  id               String         @id @default(cuid())
+  organizationId   String
+  brandId          String?
+  name             String
+  description      String?
+  objective        String? // e.g. affiliate traffic
+  targetAudience   String?
+  tone             String?
+  brandVoice       String? // optional override of Brand.voice
+  cta              String?
+  landingUrl       String?
+  platforms        String[] // ["INSTAGRAM","TIKTOK",...]
+  timezone         String         @default("UTC") // IANA
+  startDate        DateTime?
+  endDate          DateTime?
+  status           CampaignStatus @default(DRAFT)
+  approvalRequired Boolean        @default(true) // cannot be disabled for HIGH_RISK publishes
+  postingFrequency Json? // e.g. { perDay: 2, windows: ["09:00","18:00"] }
+  affiliateNetwork String?
+  affiliateUrl     String?
+  disclosureText   String? // required disclosure, injected into captions when set
+  createdAt        DateTime       @default(now())
+  updatedAt        DateTime       @updatedAt
+  pausedAt         DateTime? // set when automation paused (spec: pause/resume)
+
+  organization Organization     @relation(fields: [organizationId], references: [id])
+  brand        Brand?           @relation(fields: [brandId], references: [id])
+  content      Content[]
+  scheduled    ScheduledPost[]
+  rules        AutomationRule[]
+  memories     CampaignMemory[]
+
+  @@index([organizationId, status])
+}
+
+enum CampaignStatus {
+  DRAFT
+  ACTIVE
+  PAUSED
+  COMPLETED
+  ARCHIVED
+}
+
+model CampaignMemory {
+  id             String   @id @default(cuid())
+  campaignId     String
+  organizationId String
+  kind           String // "insight" | "instruction" | "performance_note"
+  content        String
+  createdAt      DateTime @default(now())
+  campaign       Campaign @relation(fields: [campaignId], references: [id])
+
+  @@index([campaignId])
+}
+
+// ---------- Content vault ----------
+
+model Content {
+  id               String        @id @default(cuid())
+  organizationId   String
+  campaignId       String?
+  createdById      String
+  type             ContentType
+  fileUrl          String? // storage URL (local disk or S3) — never raw FS path to client
+  storageKey       String? // StorageAdapter key; original asset is immutable
+  thumbnailUrl     String?
+  originalFilename String?
+  mimeType         String?
+  sizeBytes        Int?
+  title            String
+  description      String?
+  text             String? // for TEXT/LINK content
+  linkUrl          String?
+  tags             String[]
+  status           ContentStatus @default(DRAFT)
+  sourceHash       String? // dedupe of uploads
+  createdAt        DateTime      @default(now())
+  updatedAt        DateTime      @updatedAt
+
+  organization Organization     @relation(fields: [organizationId], references: [id])
+  campaign     Campaign?        @relation(fields: [campaignId], references: [id])
+  posts        Post[]
+  variants     ContentVariant[]
+
+  @@index([organizationId, status])
+  @@index([organizationId, campaignId])
+  @@index([organizationId, tags])
+}
+
+enum ContentType {
+  IMAGE
+  VIDEO
+  DOCUMENT
+  TEXT
+  LINK
+}
+
+enum ContentStatus {
+  DRAFT
+  PROCESSING
+  READY
+  SCHEDULED
+  PUBLISHED
+  FAILED
+  ARCHIVED
+}
+
+model ContentVariant {
+  id             String   @id @default(cuid())
+  organizationId String
+  contentId      String
+  platform       String // PlatformKey
+  caption        String
+  hashtags       String[]
+  hook           String?
+  cta            String?
+  model          String? // which LLM produced it
+  promptVersion  String?
+  safetyFlags    Json? // content-safety guardrail results (spec §36)
+  approved       Boolean?
+  createdAt      DateTime @default(now())
+
+  organization Organization @relation(fields: [organizationId], references: [id])
+  content      Content      @relation(fields: [contentId], references: [id], onDelete: Cascade)
+
+  @@unique([contentId, platform])
+  @@index([organizationId])
+}
+
+// ---------- Posts & scheduling ----------
+
+model Post {
+  id               String     @id @default(cuid())
+  organizationId   String
+  contentId        String
+  campaignId       String?
+  platform         String // PlatformKey
+  status           PostStatus @default(DRAFT)
+  caption          String
+  hashtags         String[]
+  linkUrl          String? // resolved CTA link for this post
+  variantId        String? // ContentVariant it came from, if any
+  mediaStorageKeys String[] // snapshot of media at approval time (spec §11)
+  safetyFlags      Json?
+  approvedById     String?
+  approvedAt       DateTime?
+  rejectedReason   String?
+  createdAt        DateTime   @default(now())
+  updatedAt        DateTime   @updatedAt
+
+  content   Content         @relation(fields: [contentId], references: [id])
+  scheduled ScheduledPost[]
+  comments  Comment[]
+  metrics   PostMetric[]
+
+  @@index([organizationId, status])
+  @@index([organizationId, campaignId])
+}
+
+enum PostStatus {
+  DRAFT
+  AI_GENERATED
+  AWAITING_APPROVAL
+  APPROVED
+  SCHEDULED
+  PUBLISHED
+  FAILED
+  REJECTED
+  CANCELLED
+}
+
+model ScheduledPost {
+  id              String              @id @default(cuid())
+  organizationId  String
+  postId          String
+  campaignId      String?
+  platform        String
+  socialAccountId String? // resolved at enqueue time
+  scheduledAt     DateTime // UTC instant
+  timezone        String // original IANA tz for display
+  status          ScheduledPostStatus @default(QUEUED)
+  attempts        Int                 @default(0)
+  maxAttempts     Int                 @default(5)
+  lastAttemptAt   DateTime?
+  publishedAt     DateTime?
+  platformPostId  String?
+  idempotencyKey  String              @unique // = id; guards double publish (spec §12)
+  error           Json? // structured { code, message, human, retryable }
+  createdAt       DateTime            @default(now())
+  updatedAt       DateTime            @updatedAt
+
+  post          Post             @relation(fields: [postId], references: [id])
+  campaign      Campaign?        @relation(fields: [campaignId], references: [id])
+  socialAccount SocialAccount?   @relation(fields: [socialAccountId], references: [id])
+  attemptsLog   PublishAttempt[]
+
+  @@index([organizationId, status, scheduledAt])
+}
+
+enum ScheduledPostStatus {
+  QUEUED
+  PROCESSING
+  PUBLISHED
+  FAILED
+  CANCELLED
+  RETRYING
+}
+
+model PublishAttempt {
+  id              String        @id @default(cuid())
+  scheduledPostId String
+  attemptNumber   Int
+  startedAt       DateTime
+  finishedAt      DateTime?
+  ok              Boolean?
+  errorCode       String?
+  message         String?
+  scheduledPost   ScheduledPost @relation(fields: [scheduledPostId], references: [id])
+
+  @@index([scheduledPostId])
+}
+
+// ---------- Social accounts (OAuth) ----------
+
+model SocialAccount {
+  id                String              @id @default(cuid())
+  organizationId    String
+  platform          String // PlatformKey
+  platformAccountId String
+  accountName       String
+  accountType       String? // business/creator/personal/page
+  status            SocialAccountStatus @default(CONNECTED)
+  scopes            String[]
+  accessTokenEnc    Bytes // AES-256-GCM ciphertext
+  refreshTokenEnc   Bytes?
+  tokenExpiresAt    DateTime?
+  connectedAt       DateTime            @default(now())
+  lastActionAt      DateTime?
+  lastActionOk      Boolean?
+  lastError         Json?
+  createdAt         DateTime            @default(now())
+  updatedAt         DateTime            @updatedAt
+
+  organization   Organization    @relation(fields: [organizationId], references: [id])
+  scheduledPosts ScheduledPost[]
+
+  @@unique([organizationId, platform, platformAccountId])
+  @@index([organizationId, platform, status])
+}
+
+enum SocialAccountStatus {
+  CONNECTED
+  EXPIRED
+  REVOKED
+  ERROR
+}
+
+// ---------- Comments & conversations ----------
+
+model Comment {
+  id                      String         @id @default(cuid())
+  organizationId          String
+  postId                  String
+  platform                String
+  platformCommentId       String
+  parentPlatformCommentId String? // threading
+  authorName              String?
+  authorId                String?
+  text                    String // untrusted external content — never fed raw as instructions
+  intent                  CommentIntent?
+  intentConfidence        Float?
+  sentiment               String?
+  safetyFlags             Json?
+  hidden                  Boolean        @default(false)
+  hiddenBy                String? // MANUAL | AUTOMATION
+  repliedWithTemplateId   String?
+  repliedAt               DateTime?
+  escalatedAt             DateTime?
+  status                  CommentStatus  @default(NEW)
+  postedAt                DateTime?
+  fetchedAt               DateTime       @default(now())
+  createdAt               DateTime       @default(now())
+
+  threadId String?
+  post     Post           @relation(fields: [postId], references: [id])
+  thread   CommentThread? @relation(fields: [threadId], references: [id])
+
+  @@unique([postId, platformCommentId])
+  @@index([organizationId, status])
+}
+
+enum CommentIntent {
+  QUESTION
+  PURCHASE_INTENT
+  PRICING
+  POSITIVE
+  NEGATIVE
+  COMPLAINT
+  SPAM
+  ABUSE
+  PARTNERSHIP
+  GENERAL
+  UNKNOWN
+}
+
+enum CommentStatus {
+  NEW
+  CLASSIFIED
+  ACTION_PENDING
+  HANDLED
+  ESCALATED
+  IGNORED
+}
+
+enum HideAction {
+  MANUAL
+  AUTOMATION
+}
+
+model CommentThread {
+  id             String    @id @default(cuid())
+  organizationId String
+  postId         String
+  rootCommentId  String
+  requiresHuman  Boolean   @default(false)
+  status         String    @default("open")
+  createdAt      DateTime  @default(now())
+  comments       Comment[]
+
+  @@index([organizationId, requiresHuman, status])
+}
+
+// ---------- Response library & automation rules ----------
+
+model ResponseTemplate {
+  id             String        @id @default(cuid())
+  organizationId String
+  name           String
+  intent         CommentIntent // which intent this answers
+  body           String // supports {{product}} {{price}} {{link}} {{campaign}} {{brand}}
+  platforms      String[] // optional platform restriction
+  active         Boolean       @default(true)
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime      @updatedAt
+  organization   Organization  @relation(fields: [organizationId], references: [id])
+
+  @@index([organizationId, intent, active])
+}
+
+model AutomationRule {
+  id              String           @id @default(cuid())
+  organizationId  String
+  campaignId      String?
+  name            String
+  priority        Int              @default(100)
+  matchIntent     CommentIntent?
+  matchSentiment  String? // NEGATIVE etc.
+  action          AutomationAction
+  templateId      String? // for AUTO_REPLY
+  requireApproval Boolean          @default(false)
+  enabled         Boolean          @default(true)
+  createdAt       DateTime         @default(now())
+  organization    Organization     @relation(fields: [organizationId], references: [id])
+  campaign        Campaign?        @relation(fields: [campaignId], references: [id])
+
+  @@index([organizationId, enabled, priority])
+}
+
+enum AutomationAction {
+  AUTO_REPLY
+  SUGGEST_REPLY
+  ESCALATE
+  HIDE
+}
+
+// ---------- Agent ----------
+
+model AgentExecution {
+  id                   String          @id @default(cuid())
+  organizationId       String
+  userId               String? // who initiated (chat) or "system"
+  trigger              String // CHAT | DAILY_REPORT | WORKER
+  model                String?
+  input                String
+  output               String?
+  status               String          @default("running")
+  promptInjectionFlags Json?
+  startedAt            DateTime        @default(now())
+  finishedAt           DateTime?
+  toolCalls            AgentToolCall[]
+  organization         Organization    @relation(fields: [organizationId], references: [id])
+
+  @@index([organizationId, startedAt])
+}
+
+model AgentToolCall {
+  id            String         @id @default(cuid())
+  executionId   String
+  toolName      String
+  args          Json
+  resultSummary String?
+  riskClass     ToolRiskClass
+  allowed       Boolean
+  denialReason  String?
+  createdAt     DateTime       @default(now())
+  execution     AgentExecution @relation(fields: [executionId], references: [id])
+
+  @@index([executionId])
+}
+
+enum ToolRiskClass {
+  READ
+  WRITE
+  HIGH_RISK
+}
+
+// ---------- Analytics ----------
+
+model PostMetric {
+  id            String   @id @default(cuid())
+  postId        String
+  platform      String
+  capturedAt    DateTime @default(now())
+  likes         Int?
+  commentsCount Int?
+  shares        Int?
+  views         Int?
+  clicks        Int?
+  source        String? // api | manual
+  post          Post     @relation(fields: [postId], references: [id])
+
+  @@index([postId, capturedAt])
+}
+
+// ---------- Notifications & audit ----------
+
+model Notification {
+  id             String           @id @default(cuid())
+  organizationId String
+  userId         String? // null = org-wide
+  kind           NotificationKind
+  severity       String           @default("info") // info | warning | critical
+  title          String
+  body           String?
+  resourceType   String?
+  resourceId     String?
+  readAt         DateTime?
+  createdAt      DateTime         @default(now())
+  organization   Organization     @relation(fields: [organizationId], references: [id])
+
+  @@index([organizationId, readAt, createdAt])
+}
+
+enum NotificationKind {
+  POST_PUBLISHED
+  POST_FAILED
+  APPROVAL_REQUIRED
+  CUSTOMER_DETECTED
+  HUMAN_ATTENTION_REQUIRED
+  CONNECTION_EXPIRED
+  AGENT_REPORT
+  SYSTEM
+}
+
+model AuditLog {
+  id             String       @id @default(cuid())
+  organizationId String
+  actorType      String // USER | AGENT | SYSTEM | WORKER
+  actorId        String?
+  action         String // e.g. "post.approved", "agent.caption_generated"
+  resourceType   String
+  resourceId     String
+  metadata       Json?
+  createdAt      DateTime     @default(now())
+  organization   Organization @relation(fields: [organizationId], references: [id])
+
+  @@index([organizationId, createdAt])
+  @@index([organizationId, resourceType, resourceId])
+}
+
+// ---------- Repurposing / recycling ----------
+
+model RecycleJob {
+  id              String   @id @default(cuid())
+  organizationId  String
+  sourceContentId String
+  targetPlatforms String[]
+  anglePlan       Json? // ["educational","question","statistic","story","cta"] (spec §39)
+  minGapDays      Int      @default(30)
+  status          String   @default("pending")
+  createdAt       DateTime @default(now())
+
+  @@index([organizationId, status])
+}

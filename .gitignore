@@ -12,9 +12,6 @@ dist/
 build/
 *.tsbuildinfo
 
-# Generated Prisma Client
-server/database/src/generated/
-packages/database/src/generated/
 
 # Environment files & Secrets (STRICT — NEVER COMMIT)
 .env
